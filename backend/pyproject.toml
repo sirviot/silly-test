@@ -1,0 +1,20 @@
+[project]
+name = "weather-viz-backend"
+version = "0.1.0"
+description = "Weather visualization backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "cfgrib>=0.9.14",
+    "xarray>=2024.1.0",
+    "eccodes>=1.7.0",
+    "Pillow>=10.3.0",
+    "matplotlib>=3.8.0",
+    "numpy>=1.26.0",
+    "scipy>=1.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
