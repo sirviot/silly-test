@@ -535,20 +535,55 @@ podman compose exec frontend rm -rf /tmp/nginx_tile_cache
 
 ## Known limitations & gotchas
 
-### Regular grid assumption in WMS renderer
+### Grid type support
 
-`_render_data()` builds a `RegularGridInterpolator` by taking `lats_2d[:, 0]` (first
-column) as the 1-D latitude axis and `lons_2d[0, :]` (first row) as the 1-D longitude
-axis. This works correctly for `regular_ll` (regular lat/lon) grids but **will produce
-incorrect results** for:
+The app works reliably with **`regular_ll`** (regular latitude/longitude) grids — the
+most common type from ERA5, GFS, ICON, and most NWP reanalysis products. Check the
+`grid_type` field from `/info` before trusting the WMS overlay for any other file type.
 
-- Reduced Gaussian grids (`reduced_gg`) — rows have different numbers of points
-- Rotated pole grids — lat/lon are curvilinear
-- Lambert conformal or other projected grids
+`_render_tile()` builds a `RegularGridInterpolator` by extracting 1-D coordinate axes
+from the 2-D grid arrays (`lats_2d[:, 0]` for latitudes, `lons_2d[0, :]` for
+longitudes). This assumption breaks for other grid types as follows:
 
-The `grid_type` field in `/info` tells you which type your file uses. For non-regular
-grids, the WMS overlay will look distorted or blank. Point queries (`/data`) handle
-curvilinear grids correctly via a separate nearest-neighbour code path.
+| Grid type | Example sources | WMS overlay | Point query (`/data`) |
+|-----------|----------------|-------------|----------------------|
+| `regular_ll` | ERA5, GFS, ICON, most reanalysis | ✓ Correct | ✓ Correct |
+| `reduced_gg` | ECMWF operational forecasts (native) | ✗ Wrong — rows have varying numbers of points; extracted axes are not representative | ✓ Correct |
+| `rotated_ll` | Some regional NWP models | ✗ Wrong — coordinates are in a rotated pole system; values appear at incorrect locations | ✓ Correct |
+| `lambert` | HIRLAM, HARMONIE, AROME | ✗ Wrong — coordinates are projection metres, not degrees; interpolator produces nonsense | ✓ Correct |
+| `polar_stereographic` | Arctic/Antarctic products, radar composites | ✗ Wrong — same reason as Lambert | ✓ Correct |
+
+Point queries work correctly on all grid types because `get_point_timeseries()` uses
+xarray's nearest-neighbour selection, which does not assume a regular grid.
+
+**How to fix reduced Gaussian grids:** replace `RegularGridInterpolator` with
+`scipy.interpolate.griddata`, which handles irregular point clouds:
+
+```python
+from scipy.interpolate import griddata
+pixel_values = griddata(
+    (lats_2d.ravel(), lons_2d.ravel()),
+    values.ravel(),
+    (query_lats, query_lons),
+    method="linear",
+    fill_value=np.nan,
+)
+```
+
+**How to fix projected grids (Lambert, polar stereographic, rotated pole):** use
+**pyproj** to transform the grid's native projection coordinates to WGS84 lat/lon before
+building the interpolator. Add `pyproj` to `pyproject.toml`, then:
+
+```python
+from pyproj import Transformer
+# example for Lambert conformal — projection parameters come from GRIB attributes
+transformer = Transformer.from_crs("EPSG:3034", "EPSG:4326", always_xy=True)
+lons_wgs84, lats_wgs84 = transformer.transform(lons_projected, lats_projected)
+# then feed lons_wgs84 / lats_wgs84 into griddata as above
+```
+
+The exact EPSG code depends on the grid — read `GRIB_gridType` and the projection
+parameter attributes from the xarray dataset to determine the correct CRS.
 
 ### Single vertical level
 
@@ -569,32 +604,12 @@ cfgrib writes a binary index file (e.g. `sample.grib2.5b7b6.idx`) next to the GR
 file on first open. **Always delete this file when you replace the GRIB2 data**, otherwise
 cfgrib reads wrong byte offsets from the old index.
 
-### Time slider fires on every drag pixel
-
-The `input` event on the time slider triggers a full WMS layer rebuild (Leaflet discards
-all tiles and re-requests them) for every pixel of slider movement. For files with many
-time steps, dragging the slider quickly causes a burst of requests. A debounce of
-~300 ms on the slider would improve this.
-
 ### nginx cache covers `/health`
 
 The health endpoint is cached like everything else. A cached `/health: ok` response will
 be served even if the backend has crashed, as long as a cached response is available.
 If you need reliable liveness checks, query the backend directly on port 8000 rather
 than through nginx.
-
-### Legend cache-busting
-
-`refreshLegend()` appends `&_=<timestamp>` to the legend URL to bypass the browser
-cache. Because nginx also caches the legend, each page refresh generates a unique URL
-that misses the nginx cache and hits the backend. For a static dataset this is harmless
-but slightly wasteful. Remove the `&_=${Date.now()}` if the nginx cache TTL is
-acceptable for legends.
-
-### `console.log` left in production code
-
-`app.js:loadInfo()` logs the full `/info` response to the browser console. Remove the
-`console.log("Info response:", d)` line before any production deployment.
 
 ### `/data/bbox` response size
 
@@ -605,6 +620,18 @@ or increase nginx's `proxy_read_timeout` if you query large regions.
 ---
 
 ## Extension ideas
+
+### Non-regular grid support
+
+Add `pyproj` to `pyproject.toml` and update `_render_tile()` in `wms.py` to detect the
+grid type from the field's GRIB attributes and branch accordingly:
+
+- `regular_ll` → keep current `RegularGridInterpolator` path (fastest)
+- `reduced_gg` → switch to `scipy.interpolate.griddata` (handles irregular point clouds)
+- `lambert`, `polar_stereographic`, `rotated_ll` → use `pyproj.Transformer` to convert
+  native projection coordinates to WGS84 first, then feed into `griddata`
+
+The `grid_type` key already returned by `/info` is the right signal to branch on.
 
 ### Multiple GRIB files
 
