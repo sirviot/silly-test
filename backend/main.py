@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from data_api import router as data_router
+from smartmet_api import router as smartmet_router
 from wms import router as wms_router
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ app.add_middleware(
 
 app.include_router(wms_router)
 app.include_router(data_router)
+app.include_router(smartmet_router)
 
 
 @app.get("/health")

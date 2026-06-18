@@ -297,16 +297,16 @@ def wms_legend(layer: str = "default"):
                 units = field["units"]
             break
 
-    fig, ax = plt.subplots(figsize=(1.2, 4), dpi=100)
+    fig, ax = plt.subplots(figsize=(0.8, 3.0), dpi=100)
     fig.patch.set_facecolor("#1a1a2e")
     norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
     colorbar = matplotlib.colorbar.ColorbarBase(
         ax, cmap=cmap_name, norm=norm, orientation="vertical"
     )
-    colorbar.set_label(units, color="white", fontsize=9)
+    colorbar.set_label(units, color="white", fontsize=10)
     colorbar.ax.yaxis.set_tick_params(color="white")
-    plt.setp(colorbar.ax.yaxis.get_ticklabels(), color="white", fontsize=8)
-    ax.set_title(layer, color="white", fontsize=8, pad=4)
+    plt.setp(colorbar.ax.yaxis.get_ticklabels(), color="white", fontsize=9)
+    ax.set_title(layer, color="white", fontsize=10, pad=5)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor())

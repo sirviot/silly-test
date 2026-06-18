@@ -36,7 +36,7 @@ weather-viz/
 │   └── data_api.py         # REST endpoints: /info /variables /data /data/bbox
 ├── frontend/
 │   ├── index.html          # Single-page app shell (dark-theme CSS)
-│   ├── app.js              # Leaflet map, Chart.js timeseries, sidebar
+│   ├── app.js              # Cesium 3D globe, Chart.js timeseries, sidebar
 │   ├── nginx.conf          # Reverse proxy rules + cache directives
 │   └── nginx-cache.conf    # proxy_cache_path (http-context level)
 ├── data/                   # Place .grib2 files here
@@ -49,8 +49,8 @@ weather-viz/
 | Choice | Reason |
 |--------|--------|
 | cfgrib + xarray | Standard Python GRIB2 stack; transparently handles files split into multiple datasets |
-| WMS 1.1.1 | Version Leaflet's `L.tileLayer.wms` speaks natively |
-| EPSG:3857 tiles + server-side Mercator reprojection | OSM base tiles stay standard; backend reprojects per pixel via inverse Mercator |
+| Cesium.js 3D globe | Rotatable globe with `WebMapServiceImageryProvider` — same WMS endpoint, no backend changes |
+| WMS 1.1.1 (EPSG:4326) | Cesium sends geographic BBOXes in degrees; backend detects this and skips Mercator reprojection |
 | Pillow for tile encoding | Faster and simpler than routing through matplotlib's figure/axes system |
 | nginx proxy cache | Caches rendered tiles to disk with zero backend code changes |
 | Single uvicorn worker | Sufficient for one user; scale with `--workers N` if needed |
@@ -259,8 +259,9 @@ full bbox returns ~1 million points (~50 MB JSON) — use tight bounding boxes.
 ### `GET /wms`
 
 WMS 1.1.1 endpoint. Supports `GetCapabilities` and `GetMap`. Parameter names accepted in
-both uppercase (WMS spec) and lowercase (Leaflet default). The `BBOX` is accepted in
-either EPSG:3857 metres or EPSG:4326 degrees — detected automatically by magnitude.
+both uppercase (WMS spec) and lowercase. Cesium sends `BBOX` in EPSG:4326 degrees
+(lon_min, lat_min, lon_max, lat_max); the endpoint also accepts EPSG:3857 metre
+coordinates (detected automatically by magnitude) for compatibility with other clients.
 `STYLES` is accepted but ignored; colormap is chosen by variable name. Errors return
 WMS-conformant `ServiceExceptionReport` XML.
 
@@ -310,6 +311,48 @@ No pagination or downsampling. For a global 0.25° grid the full bounding box re
 
 ---
 
+## External dependencies
+
+The browser loads three resources from the internet at runtime. Nothing is bundled or
+stored locally — an internet connection is required.
+
+| Resource | Source | Loaded |
+|----------|--------|--------|
+| Base map tiles (OpenStreetMap) | `tile.openstreetmap.org` | On demand as you pan/zoom |
+| Cesium.js (3D globe library) | `cesium.com` CDN | Once on page open (~4 MB) |
+| Chart.js (timeseries chart) | `jsdelivr.net` CDN | Once on page open (~200 kB) |
+
+### OpenStreetMap tile usage policy
+
+The map data and tile images are © OpenStreetMap contributors, licensed under the
+[Open Database Licence (ODbL)](https://www.openstreetmap.org/copyright). Two obligations apply:
+
+1. **Attribution** — the Cesium credit bar at the bottom of the globe already satisfies this.
+2. **No heavy usage** — OSM's [Tile Usage Policy](https://operations.osmfoundation.org/policies/tiles/)
+   prohibits using their public tile servers for high-traffic or commercial applications.
+   The policy is written for light, personal, or development use.
+
+For a production deployment with multiple concurrent users you must switch to a
+dedicated tile source:
+
+- **Commercial tile providers** (Mapbox, Maptiler, Stadia Maps) — same OSM data,
+  higher rate limits, free tiers available. Swap the URL in `app.js`
+  (`new Cesium.OpenStreetMapImageryProvider({ url: "..." })`).
+- **Self-hosted tiles** — download a planet or regional extract in MBTiles format
+  from [openfreemap.org](https://openfreemap.org) or
+  [download.geofabrik.de](https://download.geofabrik.de), then serve it with
+  [tileserver-gl](https://github.com/maptiler/tileserver-gl) as an additional container.
+  No external network calls for map tiles at all.
+
+### Cesium.js and Chart.js licences
+
+Both libraries are open source (Apache 2.0 and MIT respectively) and impose no
+restrictions on use. The CDN copies are loaded for convenience; you can vendor them
+into `frontend/` and update the `<script>` tags in `index.html` if you need to run
+fully air-gapped.
+
+---
+
 ## Extension ideas
 
 - **Non-regular grid support** — branch in `_render_tile()` on `grid_type`: use
@@ -319,7 +362,7 @@ No pagination or downsampling. For a global 0.25° grid the full bounding box re
   readers; add a file selector to the frontend.
 
 - **Wind vector overlay** — fetch a (u, v) grid via `/data/bbox` and render barbs or
-  streamlines on a Leaflet canvas overlay.
+  streamlines as Cesium primitive geometry or a canvas overlay.
 
 - **Colour scale controls** — expose `vmin`/`vmax` as user inputs or use percentile
   clipping instead of global field min/max.

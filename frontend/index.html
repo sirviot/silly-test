@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Weather Visualizer</title>
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Cesium — CESIUM_BASE_URL must be set before the script loads -->
+  <script>window.CESIUM_BASE_URL = "https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/";</script>
+  <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Widgets/widgets.css" />
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Cesium.js"></script>
 
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -24,31 +25,68 @@
       --text:      #e0e0f0;
       --text-dim:  #8888aa;
       --border:    #2a2a4a;
-      --sidebar-w: 280px;
-      --chart-h:   220px;
+      --sidebar-w:   250px;
+      --chart-h:     170px;
+      --gap:         14px;  /* margin from viewport edge for all panels */
+      --sidebar-gap: 44px;  /* keeps sidebar clear of the Cesium credit bar at bottom-left */
+
+      /* Shared glass panel style — applied via class */
+      --glass-bg:     rgba(13, 13, 26, 0.82);
+      --glass-border: rgba(255, 255, 255, 0.07);
+      --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      --glass-radius: 12px;
     }
 
     html, body {
       height: 100%;
       font-family: 'Segoe UI', system-ui, sans-serif;
-      background: var(--bg-deep);
+      background: #000;
       color: var(--text);
       overflow: hidden;
     }
 
-    /* ── Layout shell ── */
-    #shell {
-      display: grid;
-      grid-template-columns: var(--sidebar-w) 1fr;
-      grid-template-rows: 1fr var(--chart-h);
-      height: 100vh;
+    /* ── Globe — fills the entire viewport, sits behind panels ── */
+    #globe {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
     }
 
-    /* ── Sidebar ── */
+    /* ── Floating panel base — applied to sidebar and chart panel ── */
+    .panel {
+      position: fixed;
+      z-index: 100;
+      background: var(--glass-bg);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--glass-radius);
+      box-shadow: var(--glass-shadow);
+    }
+
+    /* ── Legend — top-left floating panel ── */
+    #legend-panel {
+      top:     var(--sidebar-gap);
+      left:    var(--gap);
+      width:   fit-content;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 14px;
+    }
+
+    #legend-panel > span {
+      font-size: 0.85rem;
+      color: var(--text);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Sidebar — bottom-left floating panel (controls + info only) ── */
     #sidebar {
-      grid-row: 1 / 3;
-      background: var(--bg-panel);
-      border-right: 1px solid var(--border);
+      left:   var(--gap);
+      bottom: var(--sidebar-gap);
+      width:  var(--sidebar-w);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -56,8 +94,10 @@
 
     #sidebar-header {
       padding: 16px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-card);
+      border-bottom: 1px solid var(--glass-border);
+      background: rgba(22, 33, 62, 0.6);
+      border-radius: var(--glass-radius) var(--glass-radius) 0 0;
+      flex-shrink: 0;
     }
 
     #sidebar-header h1 {
@@ -74,7 +114,6 @@
     }
 
     #sidebar-body {
-      flex: 1;
       overflow-y: auto;
       padding: 14px;
       display: flex;
@@ -93,7 +132,7 @@
 
     select, input[type="range"] {
       width: 100%;
-      background: var(--bg-card);
+      background: rgba(22, 33, 62, 0.7);
       border: 1px solid var(--border);
       color: var(--text);
       border-radius: 6px;
@@ -118,23 +157,10 @@
       min-height: 1.1em;
     }
 
-    #legend-box {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-    }
-
-    #legend-box span {
-      font-size: 0.72rem;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-    }
-
     #legend-img {
-      max-width: 100%;
-      border-radius: 6px;
+      max-height: 280px;
+      width: auto;
+      border-radius: 4px;
       border: 1px solid var(--border);
     }
 
@@ -142,73 +168,23 @@
       padding: 8px 14px;
       font-size: 0.72rem;
       color: var(--text-dim);
-      border-top: 1px solid var(--border);
-      background: var(--bg-card);
-    }
-
-    /* ── Map ── */
-    #map {
-      position: relative;
-      background: #111;
-    }
-
-    #map-spinner {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      display: none;
-      z-index: 9999;
-      background: rgba(13,13,26,0.75);
-      border-radius: 8px;
-      padding: 10px 18px;
-      font-size: 0.8rem;
-      color: var(--accent);
-      pointer-events: none;
-    }
-
-    /* ── Chart panel ── */
-    #chart-panel {
-      background: var(--bg-panel);
-      border-top: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      padding: 10px 16px 8px;
-    }
-
-    #chart-title {
-      font-size: 0.75rem;
-      color: var(--text-dim);
-      margin-bottom: 6px;
-    }
-
-    #chart-wrap {
-      flex: 1;
-      position: relative;
-    }
-
-    #timechart { width: 100% !important; height: 100% !important; }
-
-    #no-data-msg {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.8rem;
-      color: var(--text-dim);
+      border-top: 1px solid var(--glass-border);
+      background: rgba(22, 33, 62, 0.6);
+      border-radius: 0 0 var(--glass-radius) var(--glass-radius);
+      flex-shrink: 0;
     }
 
     /* ── Info panel ── */
     #info-panel {
-      border-top: 1px solid var(--border);
+      border-top: 1px solid var(--glass-border);
+      flex-shrink: 0;
     }
 
     #info-toggle {
       width: 100%;
-      background: var(--bg-card);
+      background: none;
       border: none;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid transparent;
       color: var(--text-dim);
       font-size: 0.72rem;
       text-transform: uppercase;
@@ -223,6 +199,8 @@
 
     #info-toggle:hover { color: var(--accent); }
 
+    #info-toggle.open { border-bottom-color: var(--glass-border); }
+
     #info-toggle .arrow { transition: transform 0.2s; }
     #info-toggle.open .arrow { transform: rotate(180deg); }
 
@@ -232,7 +210,7 @@
       font-size: 0.75rem;
       line-height: 1.7;
       overflow-y: auto;
-      max-height: 280px;
+      max-height: 220px;
     }
 
     #info-body.open { display: block; }
@@ -241,7 +219,7 @@
       display: flex;
       justify-content: space-between;
       gap: 8px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid rgba(42, 42, 74, 0.6);
       padding: 3px 0;
     }
 
@@ -250,14 +228,252 @@
     .info-key { color: var(--text-dim); flex-shrink: 0; }
     .info-val { color: var(--text); text-align: right; word-break: break-all; }
 
-    /* Leaflet dark tile adjustments */
-    .leaflet-tile { filter: brightness(0.85) saturate(0.7); }
+    /* ── Chart panel — bottom-right floating panel, hidden until data arrives ── */
+    #chart-panel {
+      bottom:  var(--sidebar-gap);
+      left:    calc(var(--sidebar-w) + var(--gap) * 2);
+      right:   var(--gap);
+      height:  var(--chart-h);
+      display: none;          /* shown by JS when chart data is available */
+      flex-direction: column;
+      padding: 10px 16px 10px;
+    }
+
+    #chart-close {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+
+    #chart-close:hover { color: var(--accent); }
+
+    #chart-title {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      flex-shrink: 0;
+    }
+
+    #chart-wrap {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+    }
+
+    #timechart { width: 100% !important; height: 100% !important; }
+
+    #no-data-msg {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    /* ── Spinner — centered in globe ── */
+    #map-spinner {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: none;
+      z-index: 50;
+      background: rgba(13, 13, 26, 0.85);
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-size: 0.8rem;
+      color: var(--accent);
+      pointer-events: none;
+      backdrop-filter: blur(8px);
+    }
+
+    /* ── Download panel — top-right floating panel ── */
+    #download-panel {
+      top:   var(--sidebar-gap);
+      right: var(--gap);
+      width: 290px;
+    }
+
+    #dl-toggle {
+      width: 100%;
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 0.88rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      padding: 12px 14px;
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    #dl-toggle:hover { opacity: 0.8; }
+    #dl-toggle .arrow { transition: transform 0.2s; font-weight: 400; }
+    #dl-toggle.open .arrow { transform: rotate(180deg); }
+
+    #dl-body {
+      padding: 0 14px 14px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      border-top: 1px solid var(--glass-border);
+    }
+
+    #dl-body.open { display: flex; }
+
+    #dl-gentime, #dl-param-info {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      min-height: 1em;
+    }
+
+    #dl-param-search {
+      width: 100%;
+      background: rgba(22, 33, 62, 0.7);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 0.82rem;
+    }
+
+    #dl-param-search::placeholder { color: var(--text-dim); }
+    #dl-param-search:focus { outline: 2px solid var(--accent); }
+
+    #dl-analysis-time {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      min-height: 1em;
+    }
+
+    #dl-param-list {
+      width: 100%;
+      min-height: 90px;
+      max-height: 120px;
+      background: rgba(22, 33, 62, 0.7);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      font-size: 0.8rem;
+      overflow-y: auto;
+    }
+
+    input[type="number"]#dl-timesteps {
+      width: 100%;
+      background: rgba(22, 33, 62, 0.7);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 0.82rem;
+    }
+
+    input[type="number"]#dl-timesteps:focus { outline: 2px solid var(--accent); }
+
+    #dl-download-btn {
+      width: 100%;
+      background: var(--accent2);
+      border: none;
+      color: #fff;
+      border-radius: 6px;
+      padding: 9px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 2px;
+    }
+
+    #dl-download-btn:hover:not(:disabled) { opacity: 0.85; }
+    #dl-download-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    #dl-status {
+      font-size: 0.73rem;
+      color: var(--text-dim);
+      min-height: 1em;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    #dl-status a { color: var(--accent); }
+
+    /* ── Cesium UI overrides ── */
+    /* Hide built-in widgets — we use the sidebar instead */
+    .cesium-viewer-toolbar,
+    .cesium-viewer-animationContainer,
+    .cesium-viewer-timelineContainer { display: none !important; }
+
+    /* Dark-tinted credit bar */
+    .cesium-viewer-bottom {
+      background: rgba(13, 13, 26, 0.55) !important;
+      font-size: 0.65rem !important;
+      backdrop-filter: blur(6px);
+    }
   </style>
 </head>
 <body>
 
-<div id="shell">
-  <aside id="sidebar">
+  <!-- Globe sits behind everything -->
+  <div id="globe">
+    <div id="map-spinner">Rendering…</div>
+  </div>
+
+  <!-- Download toolbar — top-right floating panel (WIP: hidden until downloader is stable) -->
+  <div id="download-panel" class="panel" style="display:none">
+    <button id="dl-toggle"><span>Download GRIB2</span><span class="arrow">▾</span></button>
+    <div id="dl-body">
+
+      <div class="ctrl-group" style="padding-top:10px">
+        <label for="dl-producer">Producer</label>
+        <select id="dl-producer"><option value="">— loading —</option></select>
+        <div id="dl-gentime"></div>
+      </div>
+
+      <div class="ctrl-group">
+        <label>Parameter</label>
+        <input id="dl-param-search" type="text" placeholder="Search name or description…" autocomplete="off" />
+        <select id="dl-param-list" size="5"></select>
+        <div id="dl-param-info"></div>
+      </div>
+
+      <div class="ctrl-group">
+        <label for="dl-geometry">Geometry</label>
+        <select id="dl-geometry"></select>
+        <div id="dl-analysis-time"></div>
+      </div>
+
+      <div class="ctrl-group">
+        <label for="dl-timesteps">Timesteps</label>
+        <input type="number" id="dl-timesteps" value="24" min="1" max="240" />
+      </div>
+
+      <button id="dl-download-btn">Save to server</button>
+      <div id="dl-status"></div>
+
+    </div>
+  </div>
+
+  <!-- Legend — top-left floating panel -->
+  <div id="legend-panel" class="panel">
+    <span>Legend</span>
+    <img id="legend-img" src="" alt="legend" style="display:none" />
+  </div>
+
+  <!-- Sidebar — bottom-left floating panel -->
+  <aside id="sidebar" class="panel">
     <div id="sidebar-header">
       <h1>Weather Visualizer</h1>
       <p>GRIB2 data explorer</p>
@@ -276,13 +492,6 @@
         <input type="range" id="time-slider" min="0" max="0" value="0" />
         <div id="time-label"></div>
       </div>
-
-      <div class="ctrl-group">
-        <div id="legend-box">
-          <span>Legend</span>
-          <img id="legend-img" src="" alt="legend" style="display:none" />
-        </div>
-      </div>
     </div>
 
     <div id="info-panel">
@@ -290,21 +499,18 @@
       <div id="info-body"></div>
     </div>
 
-    <div id="status-bar">Click the map to query a point.</div>
+    <div id="status-bar">Click the globe to query a point.</div>
   </aside>
 
-  <div id="map">
-    <div id="map-spinner">Rendering…</div>
-  </div>
-
-  <div id="chart-panel">
-    <div id="chart-title">Click the map to see a timeseries at that point.</div>
+  <!-- Chart panel — bottom-right floating panel -->
+  <div id="chart-panel" class="panel">
+    <button id="chart-close" title="Close">×</button>
+    <div id="chart-title">Click the globe to see a timeseries at that point.</div>
     <div id="chart-wrap">
       <canvas id="timechart"></canvas>
-      <div id="no-data-msg">No data — click a point on the map</div>
+      <div id="no-data-msg">No data — click a point on the globe</div>
     </div>
   </div>
-</div>
 
 <script src="app.js"></script>
 </body>
